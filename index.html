@@ -974,14 +974,20 @@ const firebaseConfig = {
 };
 try{
   const fs = getFirestore(initializeApp(firebaseConfig));
+  /* Firestore는 배열 안의 배열(동그라미 좌표 등)을 저장하지 못해서, 객체·배열 값은 글자로 바꿔 저장하고 읽을 때 되돌려요 */
+  const enc = d => { const o = {}, e = []; for (const [k, v] of Object.entries(JSON.parse(JSON.stringify(d)))) {
+      if (v !== null && typeof v === "object") { o[k] = JSON.stringify(v); e.push(k) } else o[k] = v }
+    o.__enc = e; return o };
+  const dec = d => { if (!d) return d; const o = { ...d }; (d.__enc || []).forEach(k => { try { o[k] = JSON.parse(d[k]) } catch (x) {} }); delete o.__enc; return o };
+  const logErr = (where, e) => { console.error("Firestore", where, e); if (window.toast) toast("서버 연결 오류: " + (e.code || e.message)) };
   const docRef = p => { const r = doc(fs, p); return {
-    set: d => setDoc(r, JSON.parse(JSON.stringify(d))),
-    onSnapshot: (ok, err) => onSnapshot(r, x => ok({ exists: x.exists(), data: () => x.data(), id: x.id }), err) } };
+    set: d => setDoc(r, enc(d)).catch(e => { logErr("저장", e); throw e }),
+    onSnapshot: (ok, err) => onSnapshot(r, x => ok({ exists: x.exists(), data: () => dec(x.data()), id: x.id }), e => { logErr("읽기", e); err && err(e) }) } };
   const collRef = (p, f = []) => ({
     doc: id => docRef(p + "/" + id),
     where: (a, op, v) => collRef(p, [...f, [a, op, v]]),
     onSnapshot: (ok, err) => onSnapshot(f.length ? query(collection(fs, p), ...f.map(([a, op, v]) => where(a, op, v))) : collection(fs, p),
-      x => ok({ docs: x.docs.map(d => ({ id: d.id, data: () => d.data() })) }), err) });
+      x => ok({ docs: x.docs.map(d => ({ id: d.id, data: () => dec(d.data()) })) }), e => { logErr("읽기", e); err && err(e) }) });
   window.__fbResolve({ db: { doc: docRef, collection: collRef },
     user: { canEdit: async () => true, can: async () => true, isOwner: async () => false, id: async () => null } });
 }catch(e){ console.error(e); window.__fbResolve(null); }
